@@ -17,6 +17,21 @@ from sft_data import (
     build_streaming_dataset,
 )
 
+# Roles: SYSTEM / user / agent
+GEMMA_CHAT_TEMPLATE = (
+    "{{ bos_token }}"
+    "{% for message in messages %}"
+    "{% if message['role'] == 'system' %}"
+    "<start_of_turn>SYSTEM\n{{ message['content'] }}<end_of_turn>\n"
+    "{% elif message['role'] == 'user' %}"
+    "<start_of_turn>user\n{{ message['content'] }}<end_of_turn>\n"
+    "{% elif message['role'] in ['assistant', 'model', 'agent'] %}"
+    "<start_of_turn>agent\n{{ message['content'] }}<end_of_turn>{{ eos_token }}"
+    "{% endif %}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}<start_of_turn>agent\n{% endif %}"
+)
+
 
 def format_codex(example: dict, tokenizer: AutoTokenizer, max_length: int) -> dict:
     return format_input_output(example, tokenizer, max_length)
@@ -83,7 +98,7 @@ class SFTArguments:
     learning_rate: float = 2e-4
     num_train_epochs: int = 1
     max_steps: int = -1
-    logging_steps: int = 10
+    logging_steps: int = 1
     save_steps: int = 200
     lora_r: int = 64
     lora_alpha: int = 32
@@ -91,6 +106,7 @@ class SFTArguments:
     max_length: int = 4096
     gradient_checkpointing: bool = True
     num_workers: int = 0
+    optim: str = "adamw_8bit"
 
     datasets: list = field(default_factory=_make_datasets)
 
@@ -100,8 +116,8 @@ def get_lora_config(args: SFTArguments) -> LoraConfig:
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
+        target_modules="all_linear",
+        modules_to_save=["embed_tokens", "lm_head"],
         bias="none",
         task_type="CAUSAL_LM",
     )
@@ -112,6 +128,8 @@ def train_sft(args: Optional[SFTArguments] = None):
         args = SFTArguments()
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    tokenizer.chat_template = GEMMA_CHAT_TEMPLATE
+
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         torch_dtype="auto",
@@ -136,12 +154,15 @@ def train_sft(args: Optional[SFTArguments] = None):
         save_steps=args.save_steps,
         bf16=True,
         gradient_checkpointing=args.gradient_checkpointing,
+        optim=args.optim,
         packing=False,
         dataloader_drop_last=True,
         remove_unused_columns=True,
         report_to=["tensorboard"],
         ddp_find_unused_parameters=False,
         dataloader_num_workers=args.num_workers,
+        logging_first_step=True,
+        log_level="info",
     )
 
     peft_config = get_lora_config(args)

@@ -11,6 +11,21 @@ from peft import LoraConfig, PeftModel
 from trl import GRPOTrainer, GRPOConfig
 from rewards import gsm8k_reward, mmlu_reward, format_reward
 
+# Roles: SYSTEM / user / agent — must match train_sft.py
+GEMMA_CHAT_TEMPLATE = (
+    "{{ bos_token }}"
+    "{% for message in messages %}"
+    "{% if message['role'] == 'system' %}"
+    "<start_of_turn>SYSTEM\n{{ message['content'] }}<end_of_turn>\n"
+    "{% elif message['role'] == 'user' %}"
+    "<start_of_turn>user\n{{ message['content'] }}<end_of_turn>\n"
+    "{% elif message['role'] in ['assistant', 'model', 'agent'] %}"
+    "<start_of_turn>agent\n{{ message['content'] }}<end_of_turn>{{ eos_token }}"
+    "{% endif %}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}<start_of_turn>agent\n{% endif %}"
+)
+
 
 @dataclass
 class GRPOArguments:
@@ -23,12 +38,13 @@ class GRPOArguments:
     per_device_batch: int = 1
     learning_rate: float = 1e-6
     max_steps: int = 300
-    logging_steps: int = 10
+    logging_steps: int = 1
     save_steps: int = 50
     lora_r: int = 64
     lora_alpha: int = 32
     gradient_checkpointing: bool = True
     num_workers: int = 0
+    optim: str = "adamw_8bit"
 
 
 def prepare_mmlu_dataset(tokenizer, split: str = "auxiliary_train"):
@@ -75,6 +91,8 @@ def train_grpo(args: Optional[GRPOArguments] = None):
         args = GRPOArguments()
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    tokenizer.chat_template = GEMMA_CHAT_TEMPLATE
+
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         torch_dtype="auto",
@@ -113,8 +131,8 @@ def train_grpo(args: Optional[GRPOArguments] = None):
     lora_config = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
+        target_modules="all_linear",
+        modules_to_save=["embed_tokens", "lm_head"],
         bias="none",
         task_type="CAUSAL_LM",
     )
@@ -131,9 +149,12 @@ def train_grpo(args: Optional[GRPOArguments] = None):
         save_steps=args.save_steps,
         bf16=True,
         gradient_checkpointing=args.gradient_checkpointing,
+        optim=args.optim,
         remove_unused_columns=True,
         report_to=["tensorboard"],
         dataloader_num_workers=args.num_workers,
+        logging_first_step=True,
+        log_level="info",
     )
 
     trainer = GRPOTrainer(

@@ -29,10 +29,11 @@ def parse_args():
     parser.add_argument("--per-device-batch", type=int, default=4)
     parser.add_argument("--grad-accum", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--lora-r", type=int, default=32)
+    parser.add_argument("--lora-r", type=int, default=64)
     parser.add_argument("--max-len", type=int, default=4096)
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--max-steps", type=int, default=-1)
+    parser.add_argument("--optim", type=str, default="adamw_8bit")
 
     # Training speed / memory
     parser.add_argument("--gradient-checkpointing", action="store_true", default=True)
@@ -41,7 +42,7 @@ def parse_args():
 
     # Logging / saving
     parser.add_argument("--save-steps", type=int, default=200)
-    parser.add_argument("--logging-steps", type=int, default=10)
+    parser.add_argument("--logging-steps", type=int, default=1)
 
     # GRPO-specific
     parser.add_argument("--grpo-batch", type=int, default=1)
@@ -79,6 +80,7 @@ def main():
             max_length=args.max_len,
             gradient_checkpointing=args.gradient_checkpointing,
             num_workers=args.num_workers,
+            optim=args.optim,
         )
         train_sft(sft_args)
 
@@ -104,6 +106,7 @@ def main():
             lora_r=args.lora_r,
             gradient_checkpointing=args.gradient_checkpointing,
             num_workers=args.num_workers,
+            optim=args.optim,
         )
         train_grpo(grpo_args)
 
