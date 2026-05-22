@@ -21,24 +21,12 @@ from sft_data import (
 )
 
 
-@dataclass
-class SFTArguments:
-    model_name: str = "Qwen/Qwen3.5-2B-Base"
-    output_dir: str = "./sft-checkpoints"
-    max_seq_length: int = 4096
-    per_device_batch: int = 2
-    gradient_accumulation: int = 4
-    learning_rate: float = 2e-4
-    num_train_epochs: int = 1
-    max_steps: int = -1
-    logging_steps: int = 10
-    save_steps: int = 200
-    lora_r: int = 64
-    lora_alpha: int = 32
-    lora_dropout: float = 0.05
-    enable_thinking: bool = False
+def format_codex(example: dict, processor: AutoProcessor) -> dict:
+    return format_input_output(example, processor, enable_thinking=True)
 
-    datasets: list = field(default_factory=lambda: [
+
+def _make_datasets():
+    return [
         DatasetConfig(
             hf_path="HuggingFaceTB/smoltalk2",
             hf_name="SFT",
@@ -76,7 +64,7 @@ class SFTArguments:
             split="train",
             sampling_weight=0.45,
             max_samples=50000,
-            formatter=lambda ex, p: format_input_output(ex, p, enable_thinking=True),
+            formatter=format_codex,
         ),
         DatasetConfig(
             hf_path="Jackrong/GLM-5.1-Reasoning-1M-Cleaned",
@@ -86,7 +74,27 @@ class SFTArguments:
             max_samples=20000,
             formatter=format_glm,
         ),
-    ])
+    ]
+
+
+@dataclass
+class SFTArguments:
+    model_name: str = "Qwen/Qwen3.5-2B-Base"
+    output_dir: str = "./sft-checkpoints"
+    max_seq_length: int = 4096
+    per_device_batch: int = 2
+    gradient_accumulation: int = 4
+    learning_rate: float = 2e-4
+    num_train_epochs: int = 1
+    max_steps: int = -1
+    logging_steps: int = 10
+    save_steps: int = 200
+    lora_r: int = 64
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    enable_thinking: bool = False
+
+    datasets: list = field(default_factory=_make_datasets)
 
 
 def get_lora_config(args: SFTArguments) -> LoraConfig:
