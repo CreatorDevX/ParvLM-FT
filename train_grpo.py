@@ -10,6 +10,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import LoraConfig, PeftModel
 from trl import GRPOTrainer, GRPOConfig
 from rewards import gsm8k_reward, mmlu_reward, format_reward
+from callbacks import InferenceCallback
 
 # Roles: SYSTEM / user / agent — must match train_sft.py
 GEMMA_CHAT_TEMPLATE = (
@@ -39,12 +40,13 @@ class GRPOArguments:
     learning_rate: float = 1e-6
     max_steps: int = 300
     logging_steps: int = 1
-    save_steps: int = 50
+    save_steps: int = 500
     lora_r: int = 64
     lora_alpha: int = 32
     gradient_checkpointing: bool = True
     num_workers: int = 0
     optim: str = "adamw_8bit"
+    run_name: str = "grpo"
 
 
 def prepare_mmlu_dataset(tokenizer, split: str = "auxiliary_train"):
@@ -92,11 +94,13 @@ def train_grpo(args: Optional[GRPOArguments] = None):
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     tokenizer.chat_template = GEMMA_CHAT_TEMPLATE
+    tokenizer.model_max_length = args.max_prompt_length + args.max_completion_length
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         torch_dtype="auto",
         trust_remote_code=True,
+        device_map="auto",
     )
     model.config.use_cache = not args.gradient_checkpointing
 
@@ -152,10 +156,11 @@ def train_grpo(args: Optional[GRPOArguments] = None):
         gradient_checkpointing=args.gradient_checkpointing,
         optim=args.optim,
         remove_unused_columns=True,
-        report_to=["tensorboard"],
+        report_to=["wandb", "tensorboard"],
         dataloader_num_workers=args.num_workers,
         logging_first_step=True,
         log_level="info",
+        run_name=args.run_name,
     )
 
     trainer = GRPOTrainer(
@@ -165,6 +170,7 @@ def train_grpo(args: Optional[GRPOArguments] = None):
         args=grpo_config,
         train_dataset=train_dataset,
         peft_config=lora_config,
+        callbacks=[InferenceCallback(tokenizer, every_n_steps=250)],
     )
 
     trainer.train()

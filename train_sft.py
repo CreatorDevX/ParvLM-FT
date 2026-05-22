@@ -16,6 +16,7 @@ from sft_data import (
     format_glm,
     build_streaming_dataset,
 )
+from callbacks import InferenceCallback
 
 # Roles: SYSTEM / user / agent
 GEMMA_CHAT_TEMPLATE = (
@@ -33,8 +34,8 @@ GEMMA_CHAT_TEMPLATE = (
 )
 
 
-def format_codex(example: dict, tokenizer: AutoTokenizer, max_length: int) -> dict:
-    return format_input_output(example, tokenizer, max_length)
+def format_codex(example: dict, tokenizer: AutoTokenizer) -> dict:
+    return format_input_output(example, tokenizer)
 
 
 def _make_datasets():
@@ -97,9 +98,9 @@ class SFTArguments:
     gradient_accumulation: int = 4
     learning_rate: float = 2e-4
     num_train_epochs: int = 1
-    max_steps: int = -1
+    max_steps: int = 5000
     logging_steps: int = 1
-    save_steps: int = 200
+    save_steps: int = 500
     lora_r: int = 64
     lora_alpha: int = 32
     lora_dropout: float = 0.05
@@ -107,6 +108,7 @@ class SFTArguments:
     gradient_checkpointing: bool = True
     num_workers: int = 0
     optim: str = "adamw_8bit"
+    run_name: str = "sft"
 
     datasets: list = field(default_factory=_make_datasets)
 
@@ -130,18 +132,19 @@ def train_sft(args: Optional[SFTArguments] = None):
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     tokenizer.chat_template = GEMMA_CHAT_TEMPLATE
+    tokenizer.model_max_length = args.max_length
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         torch_dtype="auto",
         trust_remote_code=True,
+        device_map="auto",
     )
     model.config.use_cache = not args.gradient_checkpointing
 
     train_dataset = build_streaming_dataset(
         args.datasets,
         tokenizer,
-        max_length=args.max_length,
     )
 
     sft_config = SFTConfig(
@@ -159,11 +162,12 @@ def train_sft(args: Optional[SFTArguments] = None):
         packing=False,
         dataloader_drop_last=True,
         remove_unused_columns=True,
-        report_to=["tensorboard"],
+        report_to=["wandb", "tensorboard"],
         ddp_find_unused_parameters=False,
         dataloader_num_workers=args.num_workers,
         logging_first_step=True,
         log_level="info",
+        run_name=args.run_name,
     )
 
     peft_config = get_lora_config(args)
@@ -174,6 +178,7 @@ def train_sft(args: Optional[SFTArguments] = None):
         train_dataset=train_dataset,
         processing_class=tokenizer,
         peft_config=peft_config,
+        callbacks=[InferenceCallback(tokenizer, every_n_steps=250)],
     )
 
     trainer.train()

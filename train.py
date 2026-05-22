@@ -5,10 +5,13 @@ Usage:
     python train.py --phase sft                          # SFT only
     accelerate launch --num_processes 2 train.py          # multi-GPU
     python train.py --lr 3e-4 --per-device-batch 8       # custom
+
+Wandb: set WANDB_API_KEY env var or pass --wandb-project.
 """
 
 import argparse
 import os
+import sys
 
 from train_sft import SFTArguments, train_sft
 from train_grpo import GRPOArguments, train_grpo
@@ -32,7 +35,7 @@ def parse_args():
     parser.add_argument("--lora-r", type=int, default=64)
     parser.add_argument("--max-len", type=int, default=4096)
     parser.add_argument("--epochs", type=float, default=1.0)
-    parser.add_argument("--max-steps", type=int, default=-1)
+    parser.add_argument("--max-steps", type=int, default=5000)
     parser.add_argument("--optim", type=str, default="adamw_8bit")
 
     # Training speed / memory
@@ -41,8 +44,11 @@ def parse_args():
     parser.add_argument("--num-workers", type=int, default=0)
 
     # Logging / saving
-    parser.add_argument("--save-steps", type=int, default=200)
+    parser.add_argument("--save-steps", type=int, default=500)
     parser.add_argument("--logging-steps", type=int, default=1)
+
+    # Wandb (set WANDB_PROJECT / WANDB_API_KEY env vars)
+    parser.add_argument("--wandb-run-name", default=None)
 
     # GRPO-specific
     parser.add_argument("--grpo-batch", type=int, default=1)
@@ -53,6 +59,10 @@ def parse_args():
     parser.add_argument("--grpo-lr", type=float, default=1e-6)
 
     return parser.parse_args()
+
+
+def _run_name(args, phase):
+    return args.wandb_run_name or f"gemma-3-270m-{phase}"
 
 
 def main():
@@ -81,6 +91,7 @@ def main():
             gradient_checkpointing=args.gradient_checkpointing,
             num_workers=args.num_workers,
             optim=args.optim,
+            run_name=_run_name(args, "sft"),
         )
         train_sft(sft_args)
 
@@ -107,6 +118,7 @@ def main():
             gradient_checkpointing=args.gradient_checkpointing,
             num_workers=args.num_workers,
             optim=args.optim,
+            run_name=_run_name(args, "grpo"),
         )
         train_grpo(grpo_args)
 
