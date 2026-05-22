@@ -119,8 +119,8 @@ def get_lora_config(args: SFTArguments) -> LoraConfig:
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
-        modules_to_save=["embed_tokens"],
+                        "gate_proj", "up_proj", "down_proj",
+                        "embed_tokens"],
         bias="none",
         task_type="CAUSAL_LM",
     )
