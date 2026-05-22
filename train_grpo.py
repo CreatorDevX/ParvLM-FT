@@ -131,8 +131,9 @@ def train_grpo(args: Optional[GRPOArguments] = None):
     lora_config = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        target_modules="all_linear",
-        modules_to_save=["embed_tokens", "lm_head"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        modules_to_save=["embed_tokens"],
         bias="none",
         task_type="CAUSAL_LM",
     )
