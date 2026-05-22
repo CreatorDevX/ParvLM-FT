@@ -40,28 +40,25 @@ def extract_answer_mmlu(text: str) -> Union[str, None]:
 
 def gsm8k_reward(prompts: list, completions: list, **kwargs) -> list[float]:
     """Binary reward: 1.0 if extracted answer matches ground truth."""
+    answers = kwargs.get("answer", [])
+    repeats = max(1, len(completions) // max(len(prompts), 1))
     rewards = []
-    for prompt, completion in zip(prompts, completions):
+    for i, completion in enumerate(completions):
         extracted = extract_answer_gsm8k(completion)
-        # Ground truth from dataset is passed through kwargs
-        ground_truth = kwargs.get("answer", [None] * len(prompts))
-        if extracted and ground_truth and extracted == ground_truth[0]:
-            rewards.append(1.0)
-        else:
-            rewards.append(0.0)
+        gt = answers[i // repeats] if answers and (i // repeats) < len(answers) else None
+        rewards.append(1.0 if extracted and gt is not None and str(extracted) == str(gt) else 0.0)
     return rewards
 
 
 def mmlu_reward(prompts: list, completions: list, **kwargs) -> list[float]:
     """Binary reward: 1.0 if extracted answer matches ground truth."""
+    answers = kwargs.get("answer", [])
+    repeats = max(1, len(completions) // max(len(prompts), 1))
     rewards = []
-    for prompt, completion in zip(prompts, completions):
+    for i, completion in enumerate(completions):
         extracted = extract_answer_mmlu(completion)
-        ground_truth = kwargs.get("answer", [None] * len(prompts))
-        if extracted and ground_truth and extracted == ground_truth[0]:
-            rewards.append(1.0)
-        else:
-            rewards.append(0.0)
+        gt = answers[i // repeats] if answers and (i // repeats) < len(answers) else None
+        rewards.append(1.0 if extracted and gt is not None and str(extracted) == str(gt) else 0.0)
     return rewards
 
 

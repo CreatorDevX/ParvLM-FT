@@ -1,18 +1,12 @@
-"""GRPO on MMLU + GSM8K for Qwen3.5-2B.
+"""GRPO on MMLU + GSM8K for Gemma-3-270m.
 
-Continues from SFT checkpoint. Uses rule-based rewards
-for verifiable reasoning problems.
-
-Usage (Kaggle notebook):
-  model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3.5-2B-Base", ...)
-  notebook_launcher(train_grpo, (model,), num_processes=8)
+Continues from SFT checkpoint. Supports distributed execution.
 """
 
 from dataclasses import dataclass
 from typing import Optional
-import torch
 from datasets import load_dataset, interleave_datasets
-from transformers import AutoProcessor
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import LoraConfig, PeftModel
 from trl import GRPOTrainer, GRPOConfig
 from rewards import gsm8k_reward, mmlu_reward, format_reward
@@ -20,7 +14,7 @@ from rewards import gsm8k_reward, mmlu_reward, format_reward
 
 @dataclass
 class GRPOArguments:
-    model_name: str = "Qwen/Qwen3.5-2B-Base"
+    model_name: str = "google/gemma-3-270m"
     sft_checkpoint: Optional[str] = "./sft-checkpoints"
     output_dir: str = "./grpo-checkpoints"
     max_prompt_length: int = 2048
@@ -33,13 +27,14 @@ class GRPOArguments:
     save_steps: int = 50
     lora_r: int = 64
     lora_alpha: int = 32
-    enable_thinking: bool = True
+    gradient_checkpointing: bool = True
+    num_workers: int = 0
 
 
-def prepare_mmlu_dataset(processor, split: str = "auxiliary_train"):
+def prepare_mmlu_dataset(tokenizer, split: str = "auxiliary_train"):
     ds = load_dataset("cais/mmlu", "all", split=split, streaming=True)
 
-    def format_mmlu(example, p=processor):
+    def format_mmlu(example, t=tokenizer):
         choices = "\n".join(
             f"{chr(65+i)}. {c}" for i, c in enumerate(example["choices"])
         )
@@ -47,23 +42,20 @@ def prepare_mmlu_dataset(processor, split: str = "auxiliary_train"):
             {"role": "user", "content": (
                 f"Question: {example['question']}\n"
                 f"{choices}\n"
-                f"Answer the letter (A, B, C, or D) of the correct choice."
+                "Answer the letter (A, B, C, or D) of the correct choice."
             )},
         ]
-        prompt = p.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
-            enable_thinking=False,
-        )
+        prompt = t.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         answer = chr(65 + example["answer"])
         return {"prompt": prompt, "answer": answer}
 
     return ds.map(format_mmlu)
 
 
-def prepare_gsm8k_dataset(processor, split: str = "train"):
+def prepare_gsm8k_dataset(tokenizer, split: str = "train"):
     ds = load_dataset("gsm8k", "main", split=split, streaming=True)
 
-    def format_gsm8k(example, p=processor):
+    def format_gsm8k(example, t=tokenizer):
         messages = [
             {"role": "user", "content": (
                 f"Question: {example['question']}\n"
@@ -71,57 +63,37 @@ def prepare_gsm8k_dataset(processor, split: str = "train"):
                 "Put your final answer after ####."
             )},
         ]
-        prompt = p.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
-            enable_thinking=True,
-        )
+        prompt = t.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         answer = example["answer"].split("####")[-1].strip()
         return {"prompt": prompt, "answer": answer}
 
     return ds.map(format_gsm8k)
 
 
-def train_grpo(model: torch.nn.Module, args: Optional[GRPOArguments] = None):
+def train_grpo(args: Optional[GRPOArguments] = None):
     if args is None:
         args = GRPOArguments()
 
-    processor = AutoProcessor.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
+        torch_dtype="auto",
         trust_remote_code=True,
     )
-    processor.chat_template = (
-        "{% for message in messages %}"
-        "{% set role = 'agent' if message['role'] == 'assistant' else message['role'] %}"
-        "<|im_start|>{{ role }}\n"
-        "{% if role == 'agent' and enable_thinking is defined and not enable_thinking %}"
-        "<think>\n\n</think>\n\n"
-        "{% endif %}"
-        "{{ message['content'] }}<|im_end|>\n"
-        "{% endfor %}"
-        "{% if add_generation_prompt %}"
-        "<|im_start|>agent\n"
-        "{% if enable_thinking is defined and not enable_thinking %}"
-        "<think>\n\n</think>\n\n"
-        "{% endif %}"
-        "{% endif %}"
-    )
-    processor.tokenizer.chat_template = processor.chat_template
+    model.config.use_cache = not args.gradient_checkpointing
 
-    # Load SFT checkpoint and merge into base for GRPO
     if args.sft_checkpoint is not None:
         model = PeftModel.from_pretrained(model, args.sft_checkpoint)
         model = model.merge_and_unload()
 
-    # Prepare datasets (processor formats prompts with chat template)
-    mmlu_ds = prepare_mmlu_dataset(processor, "auxiliary_train")
-    gsm8k_ds = prepare_gsm8k_dataset(processor, "train")
+    mmlu_ds = prepare_mmlu_dataset(tokenizer, "auxiliary_train")
+    gsm8k_ds = prepare_gsm8k_dataset(tokenizer, "train")
 
     mmlu_ds = mmlu_ds.take(5000)
     gsm8k_ds = gsm8k_ds.take(5000)
 
-    # Add task label for routing
-    mmlu_ds = mmlu_ds.map(lambda x, t="mmlu": {**x, "task": t})
-    gsm8k_ds = gsm8k_ds.map(lambda x, t="gsm8k": {**x, "task": t})
+    mmlu_ds = mmlu_ds.map(lambda x: {**x, "task": "mmlu"})
+    gsm8k_ds = gsm8k_ds.map(lambda x: {**x, "task": "gsm8k"})
 
     train_dataset = interleave_datasets(
         [mmlu_ds, gsm8k_ds],
@@ -158,13 +130,15 @@ def train_grpo(model: torch.nn.Module, args: Optional[GRPOArguments] = None):
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
         bf16=True,
-        remove_unused_columns=False,
+        gradient_checkpointing=args.gradient_checkpointing,
+        remove_unused_columns=True,
         report_to=["tensorboard"],
+        dataloader_num_workers=args.num_workers,
     )
 
     trainer = GRPOTrainer(
         model=model,
-        processing_class=processor.tokenizer,
+        processing_class=tokenizer,
         reward_funcs=[routed_reward],
         args=grpo_config,
         train_dataset=train_dataset,
