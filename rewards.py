@@ -74,12 +74,12 @@ def format_reward(prompts: list, completions: list, **kwargs) -> list[float]:
     for completion in completions:
         score = 0.0
         if "<think>" in completion and "</think>" in completion:
-            score += 0.5
+            score += 0.2
             # Check there's content between think tags
             inner = completion.split("<think>")[1].split("</think>")[0].strip()
             if inner:
                 score += 0.3
         if "####" in completion or "answer" in completion.lower():
-            score += 0.2
+            score += 0.5
         rewards.append(min(score, 1.0))
     return rewards
