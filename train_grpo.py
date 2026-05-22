@@ -164,7 +164,7 @@ def train_grpo(model: torch.nn.Module, args: Optional[GRPOArguments] = None):
 
     trainer = GRPOTrainer(
         model=model,
-        processing_class=processor,
+        processing_class=processor.tokenizer,
         reward_funcs=[routed_reward],
         args=grpo_config,
         train_dataset=train_dataset,

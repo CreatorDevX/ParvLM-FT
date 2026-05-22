@@ -93,7 +93,7 @@ def build_streaming_dataset(
             ds = ds.map(lambda x, f=cfg.formatter, p=processor: f(x, p))
 
         text_filter = lambda x, p=processor, m=max_length: len(
-            p(x["text"], return_tensors=None)["input_ids"]
+            p.tokenizer.encode(x["text"])
         ) < m
         ds = ds.filter(text_filter)
 

@@ -167,7 +167,7 @@ def train_sft(model: torch.nn.Module, args: Optional[SFTArguments] = None):
         model=model,
         args=sft_config,
         train_dataset=train_dataset,
-        processing_class=processor,
+        processing_class=processor.tokenizer,
         peft_config=peft_config,
     )
 
