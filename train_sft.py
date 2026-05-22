@@ -117,12 +117,24 @@ def train_sft(model: torch.nn.Module, args: Optional[SFTArguments] = None):
         args.model_name,
         trust_remote_code=True,
     )
-
-    # Patch Qwen3.5 template default to disable thinking for no_think subsets
-    processor.tokenizer.chat_template = processor.tokenizer.chat_template.replace(
-        "{%- set enable_thinking = enable_thinking if enable_thinking is defined else true %}",
-        "{%- set enable_thinking = enable_thinking if enable_thinking is defined else false %}",
+    # ChatML: system / user / agent (assistant → agent), with enable_thinking flag
+    processor.chat_template = (
+        "{% for message in messages %}"
+        "{% set role = 'agent' if message['role'] == 'assistant' else message['role'] %}"
+        "<|im_start|>{{ role }}\n"
+        "{% if role == 'agent' and enable_thinking is defined and not enable_thinking %}"
+        "<think>\n\n</think>\n\n"
+        "{% endif %}"
+        "{{ message['content'] }}<|im_end|>\n"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "<|im_start|>agent\n"
+        "{% if enable_thinking is defined and not enable_thinking %}"
+        "<think>\n\n</think>\n\n"
+        "{% endif %}"
+        "{% endif %}"
     )
+    processor.tokenizer.chat_template = processor.chat_template
 
     train_dataset = build_streaming_dataset(
         args.datasets,

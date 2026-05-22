@@ -89,6 +89,23 @@ def train_grpo(model: torch.nn.Module, args: Optional[GRPOArguments] = None):
         args.model_name,
         trust_remote_code=True,
     )
+    processor.chat_template = (
+        "{% for message in messages %}"
+        "{% set role = 'agent' if message['role'] == 'assistant' else message['role'] %}"
+        "<|im_start|>{{ role }}\n"
+        "{% if role == 'agent' and enable_thinking is defined and not enable_thinking %}"
+        "<think>\n\n</think>\n\n"
+        "{% endif %}"
+        "{{ message['content'] }}<|im_end|>\n"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "<|im_start|>agent\n"
+        "{% if enable_thinking is defined and not enable_thinking %}"
+        "<think>\n\n</think>\n\n"
+        "{% endif %}"
+        "{% endif %}"
+    )
+    processor.tokenizer.chat_template = processor.chat_template
 
     # Load SFT checkpoint and merge into base for GRPO
     if args.sft_checkpoint is not None:

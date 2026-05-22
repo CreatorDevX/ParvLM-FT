@@ -1,10 +1,10 @@
 """Kaggle TPU v5e-8 notebook for Qwen3.5-2B.
 
-Two phases:
-  Phase 1 — SFT (6 datasets, LoRA rank 64, ~1-2 hours)
-  Phase 2 — GRPO on MMLU+GSM8K, continues from SFT checkpoint (~2-3 hours)
+On TPU v5e-8 with PJRT, the Trainer handles 8-core parallelism automatically.
+No notebook_launcher needed — just run the function directly.
 
-Running Phase 2 requires a separate Kaggle session (9h limit).
+Phase 1 — SFT (6 datasets, LoRA rank 64, ~1-2 hours)
+Phase 2 — GRPO on MMLU+GSM8K, continues from SFT checkpoint (~2-3 hours)
 """
 
 # %% [markdown]
@@ -36,11 +36,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # %%
 import torch
 import torch_xla
-from accelerate import notebook_launcher
+from accelerate import Accelerator
 from transformers import AutoModelForCausalLM, AutoProcessor
 
+accelerator = Accelerator()
+print(f"TPU cores: {accelerator.num_processes}")
+
 # %% [markdown]
-# ## Cell 4: Load model (OUTSIDE training function — required for TPU fork)
+# ## Cell 4: Load model
 
 # %%
 MODEL_NAME = "Qwen/Qwen3.5-2B-Base"
@@ -70,32 +73,38 @@ sft_args = SFTArguments(
     lora_r=64,
 )
 
-notebook_launcher(train_sft, (model, sft_args), num_processes=8)
+train_sft(model, sft_args)
 
 
 # %% [markdown]
 # ---
 # # Phase 2: GRPO
 #
-# **Requires a separate session.** Stop here, save checkpoints, open a new Kaggle notebook
-# with TPU v5e-8, upload this same code, and run from Cell 6 below.
-#
-# Phase 2 loads the SFT checkpoints saved above, merges LoRA into base,
-# and runs GRPO on MMLU + GSM8K with rule-based rewards.
+# Separate session. Start from Cell 6.
 
 # %% [markdown]
-# ## Cell 6: Imports (Phase 2)
+# ## Cell 6: Install + Environment (Phase 2)
+
+# %%
+import subprocess, sys, os
+def install(pkg):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
+install("transformers>=4.49.0 accelerate>=1.5.0 trl>=0.18.0")
+install("peft>=0.14.0 datasets>=3.3.0 sentencepiece tensorboard")
+os.environ["PJRT_DEVICE"] = "TPU"
+os.environ["XLA_USE_BF16"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# %% [markdown]
+# ## Cell 7: Imports + Load model
 
 # %%
 import torch
 import torch_xla
-from accelerate import notebook_launcher
+from accelerate import Accelerator
 from transformers import AutoModelForCausalLM, AutoProcessor
 
-# %% [markdown]
-# ## Cell 7: Load base model (same as Phase 1)
-
-# %%
+accelerator = Accelerator()
 MODEL_NAME = "Qwen/Qwen3.5-2B-Base"
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
@@ -106,8 +115,6 @@ print("Base model loaded for GRPO")
 
 # %% [markdown]
 # ## Cell 8: Run GRPO
-#
-# Loads SFT checkpoint from `./sft-checkpoints`, merges, trains with GRPO.
 
 # %%
 from train_grpo import GRPOArguments, train_grpo
@@ -128,4 +135,4 @@ grpo_args = GRPOArguments(
     enable_thinking=True,
 )
 
-notebook_launcher(train_grpo, (model, grpo_args), num_processes=8)
+train_grpo(model, grpo_args)
